@@ -19,8 +19,10 @@ package buffer
 
 import (
 	"bytes"
+	"encoding/binary"
 	"io"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 )
@@ -64,7 +66,7 @@ func TestNewIoBufferBytes(t *testing.T) {
 }
 
 func TestIoBufferCopy(t *testing.T) {
-	bi := NewIoBuffer(1)
+	bi := newIoBuffer(1)
 	b := bi.(*ioBuffer)
 	n := randN(1024) + 1
 	b.copy(n)
@@ -74,7 +76,7 @@ func TestIoBufferCopy(t *testing.T) {
 }
 
 func TestIoBufferGrowCopy(t *testing.T) {
-	bi := NewIoBuffer(MaxThreshold + 1)
+	bi := newIoBuffer(MaxThreshold + 1)
 	b := bi.(*ioBuffer)
 	n := randN(1024) + 1
 	b.copy(n)
@@ -84,7 +86,7 @@ func TestIoBufferGrowCopy(t *testing.T) {
 }
 
 func TestIoBufferWrite(t *testing.T) {
-	b := NewIoBuffer(1)
+	b := newIoBuffer(1)
 	n := randN(64)
 
 	for i := 0; i < n; i++ {
@@ -133,7 +135,7 @@ func TestIoBufferWrite(t *testing.T) {
 }
 
 func TestIoBufferAppend(t *testing.T) {
-	bi := NewIoBuffer(1)
+	bi := newIoBuffer(1)
 	b := bi.(*ioBuffer)
 	n := randN(64)
 	for i := 0; i < n; i++ {
@@ -152,7 +154,7 @@ func TestIoBufferAppend(t *testing.T) {
 }
 
 func TestIoBufferAppendByte(t *testing.T) {
-	bi := NewIoBuffer(1)
+	bi := newIoBuffer(1)
 	b := bi.(*ioBuffer)
 	input := make([]byte, 0, 1024)
 	n := randN(1024)
@@ -174,8 +176,85 @@ func TestIoBufferAppendByte(t *testing.T) {
 	}
 }
 
+func TestIoBufferWriteByte(t *testing.T) {
+	bi := newIoBuffer(1)
+	b := bi.(*ioBuffer)
+	input := make([]byte, 0, 1024)
+	n := randN(1024)
+
+	for i := 0; i < n; i++ {
+		err := b.WriteByte(byte(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		input = append(input, byte(i))
+	}
+
+	if b.Len() != n {
+		t.Errorf("Expect %d bytes, but got %d", n, b.Len())
+	}
+
+	if !bytes.Equal(b.Peek(n), input) {
+		t.Errorf("Expect %x, but got %x", input, b.Peek(n))
+	}
+}
+
+func TestIoBufferWriteUin16(t *testing.T) {
+	bi := newIoBuffer(1)
+	b := bi.(*ioBuffer)
+	input := make([]byte, 0, 1024)
+	n := randN(512)
+	var temp [2]byte
+
+	for i := 0; i < n; i++ {
+		err := b.WriteUint16(uint16(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		binary.BigEndian.PutUint16(temp[0:], uint16(i))
+		input = append(input, temp[0])
+		input = append(input, temp[1])
+	}
+
+	if b.Len() != n*2 {
+		t.Errorf("Expect %d bytes, but got %d", n, b.Len())
+	}
+
+	if !bytes.Equal(b.Peek(n*2), input) {
+		t.Errorf("Expect %x, but got %x", input, b.Peek(n))
+	}
+}
+
+func TestIoBufferWriteUint32(t *testing.T) {
+	bi := newIoBuffer(1)
+	b := bi.(*ioBuffer)
+	input := make([]byte, 0, 1024)
+	n := randN(256)
+	var temp [4]byte
+
+	for i := 0; i < n; i++ {
+		err := b.WriteUint32(uint32(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		binary.BigEndian.PutUint32(temp[0:], uint32(i))
+		input = append(input, temp[0])
+		input = append(input, temp[1])
+		input = append(input, temp[2])
+		input = append(input, temp[3])
+	}
+
+	if b.Len() != n*4 {
+		t.Errorf("Expect %d bytes, but got %d", n, b.Len())
+	}
+
+	if !bytes.Equal(b.Peek(n*4), input) {
+		t.Errorf("Expect %x, but got %x", input, b.Peek(n))
+	}
+}
+
 func TestIoBufferRead(t *testing.T) {
-	b := NewIoBuffer(0)
+	b := newIoBuffer(0)
 	data := make([]byte, 1)
 
 	n, err := b.Read(data)
@@ -192,7 +271,7 @@ func TestIoBufferRead(t *testing.T) {
 		t.Errorf("Expect (0, nil) but got (%d, %s)", n, err)
 	}
 
-	b = NewIoBuffer(1)
+	b = newIoBuffer(1)
 	s := randString(1024)
 	reader := bytes.NewReader([]byte(s))
 
@@ -212,7 +291,7 @@ func TestIoBufferRead(t *testing.T) {
 
 func TestIoBufferReadOnce(t *testing.T) {
 	// test small data
-	b := NewIoBuffer(1)
+	b := newIoBuffer(1)
 	s := randString(25)
 	reader := bytes.NewReader([]byte(s))
 
@@ -232,7 +311,7 @@ func TestIoBufferReadOnce(t *testing.T) {
 	}
 
 	// test big data
-	b = NewIoBuffer(1)
+	b = newIoBuffer(1)
 	bsize := 1025
 	s = randString(bsize)
 	reader = bytes.NewReader([]byte(s))
@@ -306,7 +385,7 @@ func TestIoBufferCut(t *testing.T) {
 }
 
 func TestIoBufferAllocAndFree(t *testing.T) {
-	b := NewIoBuffer(0)
+	b := newIoBuffer(0)
 	for i := 0; i < 1024; i++ {
 		b.Alloc(i)
 		if b.Cap() < i {
@@ -330,7 +409,7 @@ func TestIoBufferAllocAndFree(t *testing.T) {
 
 func TestIoBufferZero(t *testing.T) {
 	writer := bytes.NewBuffer(nil)
-	b := NewIoBuffer(0)
+	b := newIoBuffer(0)
 	_, err := b.WriteTo(writer)
 	if err != nil {
 		t.Fatal(err)
@@ -370,7 +449,7 @@ func TestIoBufferZero(t *testing.T) {
 		t.Errorf("Expect 0, but got %s", string(writer.Bytes()))
 	}
 
-	b = NewIoBuffer(0)
+	b = newIoBuffer(0)
 
 	if b.String() != "" {
 		t.Errorf("Expect \"\", but got %s", string(b.String()))
@@ -386,7 +465,7 @@ func TestIoBufferZero(t *testing.T) {
 }
 
 func TestIoBufferMaxBufferReadOnce(t *testing.T) {
-	b := NewIoBuffer(1)
+	b := newIoBuffer(1)
 	s := randString(MaxBufferLength + 1)
 	input := make([]byte, 0, 1024)
 	reader := bytes.NewReader([]byte(s))
@@ -416,4 +495,39 @@ func TestIoBufferMaxBufferReadOnce(t *testing.T) {
 	if b.Cap() > MaxBufferLength {
 		t.Errorf("Expect got length %d", b.Cap())
 	}
+}
+
+func TestPipe_CloseWithError(t *testing.T) {
+	pipe := NewPipeBuffer(0)
+	var w sync.WaitGroup
+	w.Add(1)
+	go func() {
+		defer w.Done()
+		bs := make([]byte, 100)
+		_, err := pipe.Read(bs)
+		if err != io.EOF {
+			t.Fatal(err)
+		}
+
+	}()
+	time.Sleep(1000)
+	pipe.CloseWithError(io.EOF)
+	w.Wait()
+}
+
+func TestPipe_ReadAndWrite(t *testing.T) {
+	pipe := NewPipeBuffer(0)
+	var w sync.WaitGroup
+	bbs := []byte("aaabbbbvvvbbbbvvv")
+	w.Add(1)
+	go func() {
+		defer w.Done()
+		bs := make([]byte, len(bbs))
+		_, _ = pipe.Read(bs)
+		if !bytes.Equal(bs, bbs) {
+			t.Fatalf("test failed")
+		}
+	}()
+	_, _ = pipe.Write(bbs)
+	w.Wait()
 }
